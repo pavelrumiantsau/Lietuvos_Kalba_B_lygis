@@ -1,0 +1,7 @@
+.DS_Store
+knyga.pdf
+full_layout.txt
+content-source/
+content-package/
+*.zip
+node_modules/
