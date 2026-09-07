@@ -81,6 +81,48 @@ const AnswerStore = (() => {
   return { get, setValue, setStatus, progressForTasks, hasContent, exportAll };
 })();
 
+// Some chapter content is a summary rather than the verbatim book text (long reading
+// passages, a song, a poem — kept out of the extracted content for copyright reasons;
+// see docs/CONTENT-SCHEMA.md). If you own the book and want full fidelity for your own
+// use, you can paste the original wording in yourself here — it stays in this browser's
+// localStorage only, never uploaded anywhere, and is used instead of the summary once set.
+const SourceTextStore = (() => {
+  const KEY = 'lkb-source-text-v1';
+  let cache = null;
+  let saveTimer = null;
+
+  function load() {
+    if (cache) return cache;
+    try {
+      const raw = localStorage.getItem(KEY);
+      cache = raw ? JSON.parse(raw) : {};
+    } catch (e) {
+      cache = {};
+    }
+    return cache;
+  }
+
+  function persist() {
+    clearTimeout(saveTimer);
+    saveTimer = setTimeout(() => {
+      try { localStorage.setItem(KEY, JSON.stringify(cache)); } catch (e) { /* ignore */ }
+    }, 250);
+  }
+
+  function get(id) {
+    return load()[id] || '';
+  }
+
+  function set(id, text) {
+    const data = load();
+    if (text && text.trim()) data[id] = text;
+    else delete data[id];
+    persist();
+  }
+
+  return { get, set };
+})();
+
 // Small UI prefs (theme override, last-visited chapter) — also localStorage, tiny.
 const PrefsStore = (() => {
   const KEY = 'lkb-prefs-v1';

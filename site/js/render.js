@@ -106,37 +106,12 @@ const Render = (() => {
   async function renderBlocksOrTasks(container, section, ctx) {
     if (section.blocks) {
       for (const block of section.blocks) {
-        if (block.blockType === 'passage') container.appendChild(await renderPassage(block));
+        if (block.blockType === 'passage') container.appendChild(await PassageUI.renderPassageCard(block));
         else if (block.blockType === 'task') container.appendChild(await renderTaskBlock(block, ctx));
       }
     } else if (section.tasks) {
       for (const task of section.tasks) container.appendChild(await renderTaskBlock(task, ctx));
     }
-  }
-
-  async function renderPassage(passage) {
-    const wrap = h('div', { class: 'card passage' });
-    if (passage.sourcePage) wrap.appendChild(h('div', { class: 'source-page' }, `p. ${passage.sourcePage}`));
-    if (passage.title) wrap.appendChild(h('div', { class: 'passage-title' }, passage.title));
-    for (const p of passage.paragraphs) {
-      if (p === '') wrap.appendChild(h('div', { style: 'height:8px' }));
-      else wrap.appendChild(h('p', {}, p));
-    }
-    if (passage.images) {
-      for (const img of passage.images) {
-        const url = await ContentLoader.getImageUrl(img.file);
-        if (!url) continue;
-        const fig = h('figure', { class: 'passage-image' }, [h('img', { src: url, alt: img.caption || '' })]);
-        if (img.caption) fig.appendChild(h('figcaption', {}, img.caption));
-        wrap.appendChild(fig);
-      }
-    }
-    if (passage.footnotes && passage.footnotes.length) {
-      const fn = h('div', { class: 'footnotes' });
-      passage.footnotes.forEach(f => fn.appendChild(h('div', {}, f)));
-      wrap.appendChild(fn);
-    }
-    return wrap;
   }
 
   async function renderTaskBlock(task, ctx) {
@@ -152,7 +127,7 @@ const Render = (() => {
       }
     }
     wrap.appendChild(header);
-    wrap.appendChild(TaskWidgets.render(task));
+    wrap.appendChild(await TaskWidgets.render(task));
 
     const footer = h('div', { class: 'task-footer' });
     const statusSelect = h('select', { class: 'status-select' });
@@ -191,17 +166,21 @@ const Render = (() => {
 
   async function renderVocabulary(container, section) {
     const wrap = h('div', { class: 'card' });
-    if (section.sourcePage) wrap.appendChild(h('div', { class: 'source-page' }, `p. ${section.sourcePage}`));
+    const pageRange = section.sourcePageStart
+      ? (section.sourcePageStart === section.sourcePageEnd ? `p. ${section.sourcePageStart}` : `p. ${section.sourcePageStart}–${section.sourcePageEnd}`)
+      : (section.sourcePage ? `p. ${section.sourcePage}` : null);
+    if (pageRange) wrap.appendChild(h('div', { class: 'source-page' }, pageRange));
     for (const g of section.groups) {
       const list = h('ul', {}, g.items.map(w => h('li', {}, w)));
       wrap.appendChild(h('div', { class: 'vocab-group' }, [g.heading ? h('strong', {}, g.heading) : null, list]));
     }
-    if (section.diagram) {
-      if (section.diagram.image) {
-        const url = await ContentLoader.getImageUrl(section.diagram.image);
-        if (url) wrap.appendChild(h('img', { src: url, style: 'max-width:100%;border-radius:6px' }));
+    const diagrams = section.diagrams || (section.diagram ? [section.diagram] : []);
+    for (const d of diagrams) {
+      if (d.image) {
+        const url = await ContentLoader.getImageUrl(d.image);
+        if (url) wrap.appendChild(h('img', { src: url, style: 'max-width:100%;border-radius:6px;margin-top:8px' }));
       }
-      if (section.diagram.note) wrap.appendChild(h('div', { class: 'vocab-diagram-note' }, section.diagram.note));
+      if (d.note) wrap.appendChild(h('div', { class: 'vocab-diagram-note' }, d.note));
     }
     container.appendChild(wrap);
   }

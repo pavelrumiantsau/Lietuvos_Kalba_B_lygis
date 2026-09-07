@@ -1,7 +1,7 @@
-# Chapter content JSON schema
+# Chapter content JSON schema (v2 — proven against chapter 1)
 
-Each chapter is one JSON file: `chapters/chapter-XX.json`. Images referenced by
-relative path `images/chapter-XX/<file>`, shipped in the same content package zip.
+Each chapter is one JSON file: `chapters/chapter-NN.json`. Images referenced by
+relative path `images/chapter-NN/<file>`, shipped in the same content package zip.
 
 Top level:
 ```
@@ -14,144 +14,145 @@ Top level:
 }
 ```
 
-A `Section` is one of the book's 7 recurring parts. `type` picks the renderer:
+## Copyright / fidelity policy (apply this consistently across every chapter)
 
-- `reading_listening` — title "Skaitymo ir klausymo užduotys". Has `blocks`: an
-  ordered array mixing `passage` and `task` blocks (tasks reference passages by id
-  when the instruction says "read the text and...").
-- `vocabulary` — title "Žodynas". Has `groups`: array of word lists/diagrams.
-- `grammar` — title "Gramatika". Has `rules`: numbered rule explanations.
-- `tasks` — title one of "Žodyno ir gramatikos užduotys" / "Rašymo užduotys" /
-  "Kalbėjimo užduotys". Has `tasks`: array of Task.
-- `leisure` — title "Laisvalaikiui". Has `blocks`: same shape as reading_listening
-  (mostly passages/poems, occasionally a light task).
+Transcribe **verbatim, in full**: every vocabulary word-list, every grammar rule's
+derivation lines and short example-sentence pairs, and every discrete exercise item
+needed for the exercise to function — cloze sentence-starters/inline blanks,
+true/false statements, matching/ordering items, word banks, transform sentences,
+fill-table cells, short numbered drill sentences, footnote/glossary definitions,
+photo captions, and short one-sentence attributed quotes/maxims.
 
-### Passage block
+Do **not** transcribe verbatim (even for this personal-use, non-redistributed
+project): extended multi-paragraph reading passages/interviews composed for the book
+(roughly 100+ words of continuous prose), complete song lyrics, complete poems.
+For these, instead write:
+- `"summaryNotVerbatim": true` on the passage/task object
+- `paragraphs`/`raw`: a short **original summary in your own words** covering what
+  the text is about (enough for the exercises referencing it to make sense), never
+  a near-complete paraphrase that reproduces most of the original's content/wording
+- keep `title`, `author`/`performer`, dates, and `sourcePage` as normal (these are
+  bare facts, not the expressive text itself)
+- if the passage has short **functional fragments** actually needed for an exercise
+  (e.g. the underlined verb infinitives in a "change these verbs to participles"
+  drill), it's fine to keep just those short fragments verbatim in a separate field
+  (e.g. `verbHints`) even though the surrounding narrative is summarized — see
+  chapter 1's "Moko akmuo" task for the pattern.
+- add a line to `content-source/chapter-NN/ISSUES.md` listing every passage handled
+  this way, with page numbers, so the book owner can paste in their own transcription
+  later if they want full fidelity (the app has a "paste original text" box for
+  exactly this, stored only in the user's browser).
+
+This is not a fallback for unclear scans — it applies even when you can read the
+text perfectly. Apply it consistently: don't verbatim-transcribe chapter 3's long
+passages just because chapter 1 summarized similar ones, and vice versa.
+
+## Section types
+
+A `Section` is one of the book's 7 recurring parts, identified by `type`:
+`reading_listening`, `vocabulary`, `grammar`, `tasks` (title is one of "Žodyno ir
+gramatikos užduotys" / "Rašymo užduotys" / "Kalbėjimo užduotys"), `leisure`.
+Include `sourcePageStart`/`sourcePageEnd` on every section.
+
+- `reading_listening` / `leisure`: `"blocks": [Passage | Task, ...]` in reading order.
+- `vocabulary`: `"groups": [{"heading": string|null, "items": [string, ...]}]` plus
+  optional `"diagrams": [{"note": string, "sourcePage": number, "image"?: string}]`
+  for anything graphical (maps, nested-box diagrams, decorative photos) — describe
+  what it shows in `note` rather than trying to force it into word-list form.
+- `grammar`: `"rules": [Rule, ...]`.
+- `tasks`: `"tasks": [Task, ...]`.
+
+### Passage
 ```
 {
-  "blockType": "passage",
-  "id": "c1-s1-p1",
-  "sourcePage": 9,
-  "title": "Lietuvos vardo kilmė",          // omit if untitled
-  "paragraphs": ["...", "..."],              // two-column text merged into reading order
-  "footnotes": ["* ...", "* ..."],           // optional, small print notes at bottom
-  "images": [                                 // optional, 0+
-    {"file": "images/chapter-01/p9-photo1.jpg", "caption": "Lietavos upelis"}
-  ]
+  "blockType": "passage", "id": "c1-s1-p1", "sourcePage": 9,
+  "title": "Lietuvos vardo kilmė",
+  "paragraphs": ["...", "..."],      // "" entries = stanza/paragraph break
+  "footnotes": ["* ...", ...],        // optional
+  "images": [{"file": "images/chapter-01/...", "caption": "..."}],  // optional
+  "author": "...",                    // for poems
+  "isPoem": true,                      // optional flag
+  "summaryNotVerbatim": true           // when the policy above applies
 }
 ```
-Poems keep line breaks: put each line as its own paragraph string, and use
-`"stanzaBreak": true` markers as a paragraph value of `""` between stanzas if needed
-— simplest: just include blank strings "" for stanza breaks.
 
-### Task block (used inside reading_listening/leisure blocks, and inside tasks.tasks)
-Every task has this common envelope, plus a `taskType`-specific payload:
+### Task — common envelope
 ```
 {
-  "blockType": "task",           // only needed inside reading_listening/leisure blocks
-  "id": "c1-s1-t1",
-  "number": 1,                    // the printed number in the book, or null if unnumbered
-  "sourcePage": 10,
-  "taskType": "...",
-  "instruction": "Perskaitykite tekstą apie Lietuvos vardo kilmę ir pabaikite sakinius.",
-  "relatedPassageId": "c1-s1-p1", // optional
-  "grammarHint": ["c1-gram-1"],   // optional array of grammar rule ids this task draws on
-  ... taskType-specific fields
+  "blockType": "task",              // only inside reading_listening/leisure blocks
+  "id": "c1-s1-t1", "number": 1,     // null if the book prints no number here
+  "sourcePage": 10, "taskType": "...",
+  "instruction": "...",
+  "relatedPassageId": "c1-s1-p1",    // optional, when a separate top-level passage exists
+  "sourcePassages": [Passage, ...],  // optional, when the passage is embedded directly
+                                     // in the task instead (common for writing/speaking/
+                                     // Kalbėjimo tasks that quote a short text inline)
+  "grammarHint": ["c1-gram-1"],      // optional
+  ... taskType-specific fields below
 }
 ```
+Split an unnumbered follow-on instruction into its own task object (with
+`"number": null`) rather than forcing two different exercises under one number —
+see chapter 1's `t1a`/`t1b` pattern.
 
-taskType payloads:
+### taskType payloads (as actually implemented in the renderer)
 
-- `cloze` — fill in the blank(s) to finish/complete text.
-  `"items": [{"prefix": "Kalbininko K. Kuzavinio nuomone, ", "answerLines": 1}]`
-  (answerLines usually 1; the printed dotted line just means "write the answer here").
+- **cloze** — `"items": [Item, ...]`, optional top-level `"wordBank"`. Each Item is
+  either `{"prefix": "1. Sentence start, ", "answerLines": 1}` (blank at the end) or
+  `{"number": 2, "text": "Sentence with ___ in the middle.", "given"?: "answer"}`
+  (inline blank — `given` marks the book's own worked example, rendered as fixed
+  text rather than an input).
 
-- `open_questions` — free-text Q&A / discussion.
-  `"questions": ["Kuo ypatingas jūsų šalies kraštovaizdis?", "..."]`
+- **open_questions** — `"questions": [string, ...]` (numbered Q&A); if the book has
+  no fixed question list, omit `questions` (or leave it `[]`) and the renderer shows
+  one open textarea instead. May also carry `"quotes": [{"text","author"}]` and/or
+  `"sourcePassages"`.
 
-- `true_false` — statement graded true/neteisingas by the learner, optionally tied
-  to a listening transcript.
-  ```
-  "audio": true,
-  "transcriptRef": "c1-appendix-2",  // id into the appendix transcripts list, if audio task
-  "statements": [
-    {"number": 1, "text": "...", "given": "correct"},  // "given" = book's own worked example, not a real question
-    {"number": 2, "text": "..."}
-  ]
-  ```
+- **writing** / **speaking** — open long-form prompt. Optional `"prompt"` (only if
+  different from `instruction`), `"wordBank"`, `"images"`, `"sourcePassages"`.
 
-- `matching` — pair left column with right column.
-  `"left": ["upė", "ežeras", ...], "right": ["trykšta", "driekiasi", ...]`
-  (store exactly as printed; do not invent a correct pairing)
+- **true_false** — `"audio": true, "transcriptRef": "cN-appendix-M"` when tied to a
+  listening transcript; `"statements": [{"number","text","given"?: "correct"|
+  "incorrect"}]` — `given` marks the book's own worked example.
 
-- `ordering` — arrange items in the order mentioned/heard.
-  `"items": ["Aukštaitijos nacionalinis parkas", "Žuvintas", ...]`
+- **matching** — `"left": [...], "right": [...]`, optional `"given": {"1": "E"}`
+  (1-indexed left-item number → right letter, for the book's worked example).
 
-- `phrase_building` — combine word bank into phrases/sentences.
-  `"wordBankA": [...], "wordBankB": [...], "example": "Akmenuotas dugnas. ..."`
+- **ordering** — `"items"`: either plain strings, or (when photo-illustrated)
+  objects `{"label": "A", "name": "...", "image": "images/...", "given"?: 1}`
+  (`given` = the worked-example position). Optional `"transcriptRef"`.
 
-- `transform` — given-word / verb-form transformation fill-ins (e.g. "Nuo kalno
-  turėtų atsiverti nuostabus vaizdas (atsiverti, ...)"). Store the sentence with a
-  `___` marker where the blank is, plus the parenthetical hint words exactly as
-  printed: `"sentence": "Ar jūs esate ___ (būti) Europos centre?"`
+- **phrase_building** — `"wordBankA"`, `"wordBankB"`, `"example"`.
 
-- `writing` — open long-form writing prompt. `"prompt": "..."`, optional
-  `"wordBank": [...]` if the book supplies words to use.
+- **transform** — `"items": [{"number", "sentence", "hintWord"|"hint"?, "given"?}]`.
+  If `sentence` contains `___`, it's an inline blank; if not, it's a whole-sentence
+  rewrite task using the hint word's transformed form. `given` on item 1 is
+  typically the book's own worked example (full transformed sentence).
 
-- `speaking` — open discussion/speaking prompt, same shape as writing.
+- **fill_table** — either flat `"columns"`/`"rows"` (`rows: [{"cells": [...]}]`,
+  empty string = blank to fill in), or `"tables": [{"title","columns","rows"}, ...]`
+  for multiple named tables under one task/instruction.
 
-- `fill_table` — a table with some cells blank for the learner to complete.
-  `"columns": [...], "rows": [{"cells": ["upė", "", "teka"]}]` (empty string = blank)
+- **freeform** — use when nothing else fits. Optional `"title"`, `"attribution"`,
+  `"abbreviations"`, `"wordBank"`, `"verbHints"`, `"images"`, `"summaryNotVerbatim"` +
+  `"sourcePage"`, and `"raw"` (a description of the exercise/answer format — see
+  chapter 1's river/lake/geography cloze tasks for the pattern of describing a
+  summarized passage plus its numbered blanks in `raw`).
 
-If a task's layout genuinely doesn't fit any of the above, use `taskType: "freeform"`
-with `"raw": "<verbatim instruction + content>"` and flag it for review rather than
-forcing it into the wrong shape.
-
-### Vocabulary section
+### Grammar rule
 ```
-{"type": "vocabulary", "title": "Žodynas", "sourcePage": 16,
- "groups": [
-   {"heading": null, "items": ["kalba", "tarmė", "patarmė", "šnekta"]},
-   {"heading": null, "items": ["gimtoji kalba", "svetimoji kalba"]},
-   ...
- ],
- "diagram": {"note": "nested boxes kalba > tarmė > patarmė > šnekta", "image": "images/chapter-01/p16-diagram.jpg"}
-}
+{"number": 1, "id": "c1-gram-1", "sourcePage": 18, "title": "Daiktavardžių priesaga -umas.",
+ "lines": ["ilg-as + -umas → ilgumas", ...],
+ "examples": ["Before sentence. / After sentence.", ...]}
 ```
-Keep vocabulary as plain word/phrase lists grouped the way the columns group them.
-Don't invent definitions — the book gives bare terms, not translations.
-
-### Grammar section
-```
-{"type": "grammar", "title": "Gramatika",
- "rules": [
-   {"number": 1, "id": "c1-gram-1", "sourcePage": 17,
-    "title": "Daiktavardžių priesaga -umas.",
-    "lines": ["ilg-as + -umas → ilgumas", "plat-us + -umas → platumas", "aukšt-as + -umas → aukštumas"],
-    "examples": ["Nemunas ir Neris – ilgiausios Lietuvos upės. / Neris – antra pagal ilgumą Lietuvos upė."]
-   }
- ]}
-```
-Preserve the arrow/derivation formulas and example sentence pairs as printed.
-
-### Appendix transcripts (listening texts)
-Separate file `chapters/appendix-listening.json`:
-```
-{"transcripts": [
-  {"id": "c1-appendix-2", "chapter": 1, "section": "reading_listening", "taskNumber": 2,
-   "title": "Lietuvos gamtos stebuklai", "sourcePage": 297, "paragraphs": ["...", "..."]}
-]}
-```
-`id` must match the `transcriptRef` used by the corresponding `true_false`/listening task.
 
 ## Non-negotiable rules
-- Every piece of book text must be a faithful transcription — same wording, same
-  numbering. Never invent, paraphrase-as-if-original, or guess missing text.
-- If a page/element is unclear, ambiguous, or you're not fully sure you read it
-  right (smudged scan, unclear column order, cut-off text), do NOT guess — add an
-  entry to `content-source/chapter-XX/ISSUES.md` describing exactly what's unclear
-  and where (page number), and leave the field's value as `null` or omit it rather
-  than fabricating.
-- Blank-marking punctuation like rows of dots (`...............`) in the book means
-  "learner writes here" — represent as the schema's blank/answer fields, don't
-  transcribe the dots themselves.
+- Faithful transcription for everything in scope (see policy above) — never invent,
+  guess, or silently normalize wording. Preserve exact diacritics.
+- If unsure about a transcription (unclear scan, ambiguous column order, a layout
+  that doesn't fit any taskType), don't guess — note it in `ISSUES.md` with the page
+  number and either leave the field out or use `freeform`/`raw`.
+- Blank-marking dots (`...............`) in the book mean "learner writes here" —
+  represent with the schema's blank/answer fields, don't transcribe the dots.
+- Always end with `ISSUES.md` (even if just "No issues found") and validate the
+  chapter JSON with `python3 -m json.tool`.

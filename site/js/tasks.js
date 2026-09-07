@@ -1,5 +1,6 @@
 // Renders the input widget for each taskType, wires it to AnswerStore, and knows how
 // to serialize a task back into plain text for the "copy for Claude" flow (see copy.js).
+// render() is async because several task types lazily load images from IndexedDB.
 const TaskWidgets = (() => {
   function h(tag, attrs = {}, children = []) {
     const node = document.createElement(tag);
@@ -21,58 +22,127 @@ const TaskWidgets = (() => {
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
 
-  // --- cloze: finish/complete sentences -------------------------------------------------
-  function renderCloze(task) {
-    const saved = AnswerStore.get(task.id).value || {};
+  async function renderTaskImages(images) {
+    const frag = document.createDocumentFragment();
+    for (const img of images || []) {
+      const url = await ContentLoader.getImageUrl(img.file);
+      if (!url) continue;
+      const fig = h('figure', { class: 'passage-image' }, [h('img', { src: url, alt: img.caption || img.label || '' })]);
+      if (img.caption || img.label) fig.appendChild(h('figcaption', {}, img.caption || img.label));
+      frag.appendChild(fig);
+    }
+    return frag;
+  }
+
+  async function renderSourcePassages(task) {
+    const frag = document.createDocumentFragment();
+    for (const p of task.sourcePassages || []) {
+      frag.appendChild(await PassageUI.renderPassageCard(p, { card: false }));
+    }
+    return frag;
+  }
+
+  // --- cloze: finish/complete sentences, or fill an inline blank -------------------------
+  async function renderCloze(task) {
     const wrap = h('div', { class: 'cloze-wrap' });
-    task.items.forEach((item, i) => {
-      const save = debounce((val) => {
-        const cur = { ...(AnswerStore.get(task.id).value || {}) };
-        cur[i] = val;
-        AnswerStore.setValue(task.id, cur);
-      }, 300);
-      const input = h('input', {
-        type: 'text', 'data-idx': i, value: saved[i] || '',
-        oninput: (e) => save(e.target.value),
-      });
-      wrap.appendChild(h('div', { class: 'cloze-item' }, [
-        h('span', { class: 'prefix' }, item.prefix),
-        input,
-      ]));
-    });
-    return wrap;
-  }
 
-  // --- open_questions / writing / speaking: free text -----------------------------------
-  function renderOpenQuestions(task) {
+    // Special case: lyrics/text intentionally omitted (copyright) — no `items` at all.
+    if (!task.items) {
+      if (task.songTitle) wrap.appendChild(h('div', { class: 'passage-title' }, task.songTitle));
+      if (task.performer) wrap.appendChild(h('div', { class: 'q-text' }, task.performer));
+      if (task.performerBio) wrap.appendChild(h('p', {}, task.performerBio));
+      wrap.appendChild(h('div', { class: 'tf-given-badge', style: 'background:var(--warn-bg);color:var(--warn);display:inline-block' },
+        task.sourcePage ? `Žodžiai nepateikti — žr. knygos p. ${task.sourcePage}` : 'Žodžiai nepateikti'));
+      if (task.images) wrap.appendChild(await renderTaskImages(task.images));
+      const saved = AnswerStore.get(task.id).value || '';
+      const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
+      const ta = h('textarea', { class: 'open-answer', rows: 4, placeholder: 'Klausydamas įrašyk praleistus žodžius čia (arba visą dainos tekstą, jei nori).', oninput: (e) => save(e.target.value) });
+      ta.value = saved;
+      wrap.appendChild(ta);
+      return wrap;
+    }
+
     const saved = AnswerStore.get(task.id).value || {};
-    const wrap = h('div', {});
-    task.questions.forEach((q, i) => {
-      const save = debounce((val) => {
-        const cur = { ...(AnswerStore.get(task.id).value || {}) };
-        cur[i] = val;
-        AnswerStore.setValue(task.id, cur);
-      }, 300);
-      const ta = h('textarea', { rows: 3, oninput: (e) => save(e.target.value) });
-      ta.value = saved[i] || '';
-      wrap.appendChild(h('div', { class: 'question-item' }, [
-        h('div', { class: 'q-text' }, `${i + 1}. ${q}`),
-        ta,
-      ]));
-    });
-    return wrap;
-  }
-
-  function renderOpenText(task) {
-    const saved = AnswerStore.get(task.id).value || '';
-    const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
-    const ta = h('textarea', { class: 'open-answer', rows: 6, oninput: (e) => save(e.target.value) });
-    ta.value = saved;
-    const wrap = h('div', {});
-    if (task.prompt) wrap.appendChild(h('div', { class: 'q-text' }, task.prompt));
     if (task.wordBank && task.wordBank.length) {
       wrap.appendChild(h('div', { class: 'wordbank' }, task.wordBank.map(w => h('span', { class: 'chip' }, w))));
     }
+    task.items.forEach((item, i) => {
+      const key = item.number != null ? String(item.number) : String(i);
+      if (item.given) {
+        wrap.appendChild(h('div', { class: 'cloze-item' }, [
+          h('span', { class: 'prefix' }, item.text || item.prefix),
+          h('span', { class: 'tf-given-badge' }, item.given),
+        ]));
+        return;
+      }
+      const save = debounce((val) => {
+        const cur = { ...(AnswerStore.get(task.id).value || {}) };
+        cur[key] = val;
+        AnswerStore.setValue(task.id, cur);
+      }, 300);
+      const input = h('input', { type: 'text', value: saved[key] || '', oninput: (e) => save(e.target.value) });
+
+      if (item.text && item.text.includes('___')) {
+        const parts = item.text.split('___');
+        const row = h('div', { class: 'cloze-item' }, [h('span', { class: 'prefix' }, parts[0])]);
+        row.appendChild(input);
+        if (parts[1]) row.appendChild(h('span', {}, parts[1]));
+        wrap.appendChild(row);
+      } else {
+        wrap.appendChild(h('div', { class: 'cloze-item' }, [
+          h('span', { class: 'prefix' }, item.prefix || item.text),
+          input,
+        ]));
+      }
+    });
+    return wrap;
+  }
+
+  // --- open_questions: numbered Q&A, or quotes-to-react-to, or a bare open prompt --------
+  async function renderOpenQuestions(task) {
+    const saved = AnswerStore.get(task.id).value || {};
+    const wrap = h('div', {});
+    if (task.sourcePassages) wrap.appendChild(await renderSourcePassages(task));
+    if (task.quotes) wrap.appendChild(PassageUI.renderQuotes(task.quotes));
+
+    if (task.questions && task.questions.length) {
+      task.questions.forEach((q, i) => {
+        const save = debounce((val) => {
+          const cur = { ...(AnswerStore.get(task.id).value || {}) };
+          cur[i] = val;
+          AnswerStore.setValue(task.id, cur);
+        }, 300);
+        const ta = h('textarea', { rows: 3, oninput: (e) => save(e.target.value) });
+        ta.value = saved[i] || '';
+        wrap.appendChild(h('div', { class: 'question-item' }, [
+          h('div', { class: 'q-text' }, `${i + 1}. ${q}`),
+          ta,
+        ]));
+      });
+    } else {
+      // No fixed question list printed — a single open-response box.
+      const savedStr = typeof saved === 'string' ? saved : '';
+      const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
+      const ta = h('textarea', { class: 'open-answer', rows: 5, oninput: (e) => save(e.target.value) });
+      ta.value = savedStr;
+      wrap.appendChild(ta);
+    }
+    return wrap;
+  }
+
+  // --- writing / speaking: free text, optionally with embedded source passages ----------
+  async function renderOpenText(task) {
+    const saved = AnswerStore.get(task.id).value || '';
+    const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
+    const wrap = h('div', {});
+    if (task.sourcePassages) wrap.appendChild(await renderSourcePassages(task));
+    if (task.prompt && task.prompt !== task.instruction) wrap.appendChild(h('div', { class: 'q-text' }, task.prompt));
+    if (task.wordBank && task.wordBank.length) {
+      wrap.appendChild(h('div', { class: 'wordbank' }, task.wordBank.map(w => h('span', { class: 'chip' }, w))));
+    }
+    if (task.images) wrap.appendChild(await renderTaskImages(task.images));
+    const ta = h('textarea', { class: 'open-answer', rows: 6, oninput: (e) => save(e.target.value) });
+    ta.value = saved;
     wrap.appendChild(ta);
     return wrap;
   }
@@ -91,7 +161,7 @@ const TaskWidgets = (() => {
           const t = await ContentLoader.getTranscript(task.transcriptRef);
           if (t) {
             if (t.title) box.appendChild(h('div', { class: 'passage-title' }, t.title));
-            t.paragraphs.forEach(p => box.appendChild(h('p', {}, p)));
+            (t.paragraphs || []).forEach(p => box.appendChild(h('p', {}, p)));
           } else {
             box.appendChild(h('p', {}, '(Teksto nepavyko rasti įkeltame turinyje.)'));
           }
@@ -144,9 +214,20 @@ const TaskWidgets = (() => {
   // --- matching: pair left column with right column --------------------------------------
   function renderMatching(task) {
     const saved = AnswerStore.get(task.id).value || {};
-    const wrap = h('div', { class: 'matching-wrap' });
+    const given = task.given || {};
+    const wrap = h('div', {});
+    if (task.note) wrap.appendChild(h('div', { class: 'source-page' }, task.note));
+    const inner = h('div', { class: 'matching-wrap' });
     const leftCol = h('div', { class: 'matching-col' });
     task.left.forEach((text, i) => {
+      const num = String(i + 1);
+      if (given[num]) {
+        leftCol.appendChild(h('div', { class: 'matching-item' }, [
+          h('span', {}, `${num}. ${text}`),
+          h('span', { class: 'tf-given-badge' }, given[num]),
+        ]));
+        return;
+      }
       const select = h('select', {
         onchange: (e) => {
           const cur = { ...(AnswerStore.get(task.id).value || {}) };
@@ -162,7 +243,7 @@ const TaskWidgets = (() => {
         select.appendChild(opt);
       });
       leftCol.appendChild(h('div', { class: 'matching-item' }, [
-        h('span', {}, `${i + 1}. ${text}`),
+        h('span', {}, `${num}. ${text}`),
         select,
       ]));
     });
@@ -173,31 +254,69 @@ const TaskWidgets = (() => {
         h('span', {}, text),
       ]));
     });
-    wrap.appendChild(leftCol);
-    wrap.appendChild(rightCol);
+    inner.appendChild(leftCol);
+    inner.appendChild(rightCol);
+    wrap.appendChild(inner);
     return wrap;
   }
 
-  // --- ordering: arrange items in heard/mentioned order -----------------------------------
-  function renderOrdering(task) {
+  // --- ordering: arrange items (possibly photo-illustrated) in heard/mentioned order -----
+  async function renderOrdering(task) {
     const saved = AnswerStore.get(task.id).value || {};
-    const wrap = h('ul', { class: 'ordering-list' });
-    task.items.forEach((text, i) => {
-      const select = h('select', {
-        onchange: (e) => {
-          const cur = { ...(AnswerStore.get(task.id).value || {}) };
-          cur[i] = e.target.value;
-          AnswerStore.setValue(task.id, cur);
-        },
+    const wrap = h('div', {});
+    if (task.transcriptRef) {
+      const box = h('div', { class: 'transcript-box' });
+      box.hidden = true;
+      const toggle = h('button', { class: 'btn btn-small transcript-toggle' }, 'Rodyti / slėpti tekstą (klausymo užduotis)');
+      toggle.addEventListener('click', async () => {
+        if (!box.dataset.loaded) {
+          const t = await ContentLoader.getTranscript(task.transcriptRef);
+          if (t) {
+            if (t.title) box.appendChild(h('div', { class: 'passage-title' }, t.title));
+            (t.paragraphs || []).forEach(p => box.appendChild(h('p', {}, p)));
+          }
+          box.dataset.loaded = '1';
+        }
+        box.hidden = !box.hidden;
       });
-      select.appendChild(h('option', { value: '' }, '—'));
-      for (let n = 1; n <= task.items.length; n++) {
-        const opt = h('option', { value: String(n) }, String(n));
-        if (saved[i] === String(n)) opt.selected = true;
-        select.appendChild(opt);
+      wrap.appendChild(toggle);
+      wrap.appendChild(box);
+    }
+    const list = h('ul', { class: 'ordering-list' });
+    const items = task.items || [];
+    const isObjectItems = items.length && typeof items[0] === 'object';
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      const text = isObjectItems ? `${item.label ? item.label + '. ' : ''}${item.name}` : item;
+      const given = isObjectItems ? item.given : undefined;
+      const li = h('li', { class: 'ordering-item' });
+      if (isObjectItems && item.image) {
+        const url = await ContentLoader.getImageUrl(item.image);
+        if (url) li.appendChild(h('img', { src: url, style: 'width:48px;height:48px;object-fit:cover;border-radius:6px' }));
       }
-      wrap.appendChild(h('li', { class: 'ordering-item' }, [select, h('span', {}, text)]));
-    });
+      if (given != null) {
+        li.appendChild(h('span', { class: 'tf-given-badge' }, `vieta ${given}`));
+        li.appendChild(h('span', {}, text));
+      } else {
+        const select = h('select', {
+          onchange: (e) => {
+            const cur = { ...(AnswerStore.get(task.id).value || {}) };
+            cur[i] = e.target.value;
+            AnswerStore.setValue(task.id, cur);
+          },
+        });
+        select.appendChild(h('option', { value: '' }, '—'));
+        for (let n = 1; n <= items.length; n++) {
+          const opt = h('option', { value: String(n) }, String(n));
+          if (saved[i] === String(n)) opt.selected = true;
+          select.appendChild(opt);
+        }
+        li.appendChild(select);
+        li.appendChild(h('span', {}, text));
+      }
+      list.appendChild(li);
+    }
+    wrap.appendChild(list);
     return wrap;
   }
 
@@ -217,38 +336,61 @@ const TaskWidgets = (() => {
     return wrap;
   }
 
-  // --- transform: sentence with a blank + parenthetical hint word ------------------------
-  function renderTransform(task) {
+  // --- transform: either an inline blank, or a whole-sentence rewrite given a hint word --
+  async function renderTransform(task) {
+    if (!task.items) return renderFreeform(task); // mislabeled data safety net
     const saved = AnswerStore.get(task.id).value || {};
     const wrap = h('div', {});
-    task.sentences.forEach((sentence, i) => {
-      const parts = sentence.split('___');
-      const input = h('input', {
-        type: 'text', value: saved[i] || '',
-        oninput: (e) => {
-          const cur = { ...(AnswerStore.get(task.id).value || {}) };
-          cur[i] = e.target.value;
-          AnswerStore.setValue(task.id, cur);
-        },
-      });
-      const row = h('div', { class: 'cloze-item' }, [h('span', { class: 'prefix' }, parts[0])]);
-      row.appendChild(input);
-      if (parts[1]) row.appendChild(h('span', {}, parts[1]));
-      wrap.appendChild(row);
+    task.items.forEach((item, i) => {
+      const key = item.number != null ? String(item.number) : String(i);
+      const hint = item.hintWord || item.hint;
+      if (item.given) {
+        const row = h('div', { class: 'cloze-item' }, [
+          h('span', { class: 'prefix' }, `${item.number}. ${item.sentence}`),
+        ]);
+        if (hint) row.appendChild(h('span', { class: 'tf-given-badge' }, hint));
+        row.appendChild(h('span', { class: 'tf-given-badge' }, item.given));
+        wrap.appendChild(row);
+        return;
+      }
+      const save = debounce((val) => {
+        const cur = { ...(AnswerStore.get(task.id).value || {}) };
+        cur[key] = val;
+        AnswerStore.setValue(task.id, cur);
+      }, 300);
+
+      if (item.sentence && item.sentence.includes('___')) {
+        const parts = item.sentence.split('___');
+        const input = h('input', { type: 'text', value: saved[key] || '', oninput: (e) => save(e.target.value) });
+        const row = h('div', { class: 'cloze-item' }, [h('span', { class: 'prefix' }, `${item.number}. ${parts[0]}`)]);
+        row.appendChild(input);
+        if (parts[1]) row.appendChild(h('span', {}, parts[1]));
+        if (hint) row.appendChild(h('span', { class: 'wordbank' }, h('span', { class: 'chip' }, hint)));
+        wrap.appendChild(row);
+      } else {
+        // Whole-sentence rewrite using the hint word's participle/gerund form.
+        const input = h('input', { type: 'text', value: saved[key] || '', oninput: (e) => save(e.target.value), style: 'width:100%;margin-top:4px' });
+        const row = h('div', { class: 'question-item' }, [
+          h('div', { class: 'q-text' }, `${item.number}. ${item.sentence}${hint ? ` (${hint})` : ''}`),
+          input,
+        ]);
+        wrap.appendChild(row);
+      }
     });
     return wrap;
   }
 
-  // --- fill_table: table with some blank cells --------------------------------------------
-  function renderFillTable(task) {
+  // --- fill_table: one or more named tables with some blank cells -------------------------
+  function renderOneTable(task, tableSpec, tableIdx) {
     const saved = AnswerStore.get(task.id).value || {};
     const table = h('table', { class: 'fill-table' });
-    if (task.columns) table.appendChild(h('tr', {}, task.columns.map(c => h('th', {}, c))));
-    task.rows.forEach((row, ri) => {
+    if (tableSpec.title) table.appendChild(h('caption', { style: 'text-align:left;font-weight:700;padding:4px 0' }, tableSpec.title));
+    if (tableSpec.columns) table.appendChild(h('tr', {}, tableSpec.columns.map(c => h('th', {}, c))));
+    tableSpec.rows.forEach((row, ri) => {
       const tr = h('tr', {});
       row.cells.forEach((cell, ci) => {
         if (cell === '') {
-          const key = `${ri}-${ci}`;
+          const key = `${tableIdx}-${ri}-${ci}`;
           const input = h('input', {
             type: 'text', value: (saved[key] || ''),
             oninput: (e) => {
@@ -267,9 +409,27 @@ const TaskWidgets = (() => {
     return table;
   }
 
-  function renderFreeform(task) {
+  function renderFillTable(task) {
     const wrap = h('div', {});
-    wrap.appendChild(h('div', { class: 'q-text' }, task.raw));
+    if (task.note) wrap.appendChild(h('div', { class: 'source-page' }, task.note));
+    const specs = task.tables || [{ columns: task.columns, rows: task.rows }];
+    specs.forEach((spec, i) => wrap.appendChild(renderOneTable(task, spec, i)));
+    return wrap;
+  }
+
+  async function renderFreeform(task) {
+    const wrap = h('div', {});
+    if (task.title) wrap.appendChild(h('div', { class: 'passage-title' }, task.title));
+    if (task.attribution) wrap.appendChild(h('div', { class: 'source-page' }, task.attribution));
+    if (task.abbreviations) wrap.appendChild(h('div', { class: 'source-page' }, task.abbreviations.join('; ')));
+    if (task.summaryNotVerbatim) {
+      wrap.appendChild(h('div', { class: 'tf-given-badge', style: 'background:var(--warn-bg);color:var(--warn)' },
+        `Santrauka, ne originalus tekstas${task.sourcePage ? ` — originalą žr. knygos p. ${task.sourcePage}` : ''}`));
+    }
+    if (task.wordBank) wrap.appendChild(h('div', { class: 'wordbank' }, task.wordBank.map(w => h('span', { class: 'chip' }, w))));
+    if (task.verbHints) wrap.appendChild(h('div', { class: 'wordbank' }, task.verbHints.map(w => h('span', { class: 'chip' }, w))));
+    if (task.images) wrap.appendChild(await renderTaskImages(task.images));
+    wrap.appendChild(h('div', { class: 'q-text' }, task.raw || ''));
     const saved = AnswerStore.get(task.id).value || '';
     const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
     const ta = h('textarea', { class: 'open-answer', rows: 4, oninput: (e) => save(e.target.value) });
@@ -292,14 +452,13 @@ const TaskWidgets = (() => {
     freeform: renderFreeform,
   };
 
-  function render(task) {
+  async function render(task) {
     const fn = renderers[task.taskType];
     if (!fn) {
-      const wrap = h('div', { class: 'q-text' }, `(Nežinomas užduoties tipas: ${task.taskType})`);
-      return wrap;
+      return h('div', { class: 'q-text' }, `(Nežinomas užduoties tipas: ${task.taskType})`);
     }
-    return fn(task);
+    return await fn(task);
   }
 
-  return { render, h, debounce };
+  return { render, h, debounce, renderTaskImages, renderSourcePassages };
 })();

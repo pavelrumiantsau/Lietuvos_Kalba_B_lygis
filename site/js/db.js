@@ -55,12 +55,20 @@ const ContentDB = (() => {
   }
 
   async function getAll(storeName) {
+    // Both requests must be issued on the same transaction without awaiting
+    // anything in between — an IDB transaction auto-commits once the current
+    // task/microtask queue drains with no pending requests on it.
     const store = await tx(storeName, 'readonly');
-    const keys = await getAllKeys(storeName);
     return new Promise((resolve, reject) => {
-      const req = store.getAll();
-      req.onsuccess = () => resolve(keys.map((k, i) => [k, req.result[i]]));
-      req.onerror = () => reject(req.error);
+      const keysReq = store.getAllKeys();
+      const valuesReq = store.getAll();
+      let keys, values;
+      let pending = 2;
+      const done = () => { if (--pending === 0) resolve(keys.map((k, i) => [k, values[i]])); };
+      keysReq.onsuccess = () => { keys = keysReq.result; done(); };
+      valuesReq.onsuccess = () => { values = valuesReq.result; done(); };
+      keysReq.onerror = () => reject(keysReq.error);
+      valuesReq.onerror = () => reject(valuesReq.error);
     });
   }
 
