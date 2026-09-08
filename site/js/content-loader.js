@@ -97,6 +97,7 @@ const ContentLoader = (() => {
   }
 
   async function getImageUrl(path) {
+    if (!path) return null;
     if (imageUrlCache.has(path)) return imageUrlCache.get(path);
     const key = path.replace(/^images\//, '');
     const blob = await ContentDB.get('images', key);

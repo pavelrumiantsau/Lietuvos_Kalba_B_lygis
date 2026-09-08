@@ -75,6 +75,14 @@ const TaskWidgets = (() => {
   async function renderTaskImages(images) {
     const frag = document.createDocumentFragment();
     for (const img of images || []) {
+      if (!img.file) {
+        // Referenced but never curated as an asset (e.g. "see original page X") —
+        // show the label so the learner knows it exists, without a broken image.
+        if (img.caption || img.label) {
+          frag.appendChild(h('span', { class: 'wordbank' }, h('span', { class: 'chip' }, `🖼 ${img.caption || img.label}`)));
+        }
+        continue;
+      }
       const url = await ContentLoader.getImageUrl(img.file);
       if (!url) continue;
       const fig = h('figure', { class: 'passage-image' }, [h('img', { src: url, alt: img.caption || img.label || '' })]);
