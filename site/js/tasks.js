@@ -58,6 +58,65 @@ const TaskWidgets = (() => {
     rows.forEach(r => table.appendChild(h('tr', {}, cols.map(c => h('td', {}, String(r[c]))))));
     return table;
   }
+  // Chapters keep inventing ad-hoc "array of grouped sub-content" fields when a
+  // task doesn't fit the standard shapes (e.g. several numbered mini-passages
+  // under one task, or several small word-bank+cloze groups under one
+  // instruction). Rather than special-case every new key name, render any
+  // array-of-objects field not already consumed by a taskType's own renderer.
+  const CORE_TASK_KEYS = new Set([
+    'blockType', 'id', 'number', 'sourcePage', 'taskType', 'instruction', 'grammarHint',
+    'note', 'relatedPassageId', 'sourcePassages', 'images', 'wordBank', 'verbHints',
+    'title', 'attribution', 'abbreviations', 'raw', 'summaryNotVerbatim', 'grid', 'chart',
+    'quotes', 'questions', 'transcriptRef', 'audio', 'statements', 'options', 'left',
+    'right', 'given', 'leftLabels', 'items', 'wordBankA', 'wordBankB', 'example',
+    'sentence', 'sentences', 'columns', 'rows', 'tables', 'songTitle', 'performer',
+    'performerBio', 'lyricsOmitted', 'paragraphs', 'footnotes', 'author', 'isPoem',
+    'prompt', 'pageStart', 'pageEnd', 'sourcePageStart', 'sourcePageEnd',
+  ]);
+  function renderClozeLine(task, key, item) {
+    if (item.given) {
+      return h('div', { class: 'cloze-item' }, [
+        h('span', { class: 'prefix' }, item.text || item.prefix || item.sentence),
+        h('span', { class: 'tf-given-badge' }, item.given),
+      ]);
+    }
+    const saved = AnswerStore.get(task.id).value || {};
+    const save = debounce((v) => {
+      const cur = { ...(AnswerStore.get(task.id).value || {}) };
+      cur[key] = v;
+      AnswerStore.setValue(task.id, cur);
+    }, 300);
+    const text = item.text || item.prefix || item.sentence || '';
+    const input = h('input', { type: 'text', value: saved[key] || '', oninput: (e) => save(e.target.value) });
+    if (text.includes('___')) {
+      const parts = text.split('___');
+      const row = h('div', { class: 'cloze-item' }, [h('span', { class: 'prefix' }, parts[0])]);
+      row.appendChild(input);
+      if (parts[1]) row.appendChild(h('span', {}, parts[1]));
+      return row;
+    }
+    return h('div', { class: 'cloze-item' }, [h('span', { class: 'prefix' }, text), input]);
+  }
+  function renderExtraGroups(task) {
+    const frag = document.createDocumentFragment();
+    for (const [key, val] of Object.entries(task)) {
+      if (CORE_TASK_KEYS.has(key) || !Array.isArray(val) || !val.length || typeof val[0] !== 'object') continue;
+      val.forEach((entry, gi) => {
+        const box = h('div', { class: 'passage', style: 'margin:10px 0' });
+        const heading = entry.title || entry.titleGiven || entry.phrase || (entry.number != null ? `${entry.number}.` : null);
+        if (heading) box.appendChild(h('div', { class: 'passage-title' }, heading));
+        if (entry.wordBank) box.appendChild(h('div', { class: 'wordbank' }, entry.wordBank.map(w => h('span', { class: 'chip' }, w))));
+        if (entry.text && !entry.items && !entry.sentences) box.appendChild(h('p', {}, entry.text));
+        (entry.paragraphs || []).forEach(p => { if (p) box.appendChild(h('p', {}, p)); });
+        (entry.items || []).forEach((item, ii) => box.appendChild(renderClozeLine(task, `${key}-${gi}-${ii}`, item)));
+        (entry.sentences || []).forEach((s, si) => box.appendChild(renderClozeLine(task, `${key}-${gi}-s${si}`, s)));
+        if (entry.note) box.appendChild(h('div', { class: 'source-page' }, entry.note));
+        frag.appendChild(box);
+      });
+    }
+    return frag;
+  }
+
   function renderExtras(task) {
     const frag = document.createDocumentFragment();
     if (task.grid) frag.appendChild(renderGrid(task.grid));
@@ -69,6 +128,7 @@ const TaskWidgets = (() => {
       if (t2) frag.appendChild(t2);
       if (!t1 && !t2 && c.note) frag.appendChild(h('div', { class: 'q-text' }, c.note));
     }
+    frag.appendChild(renderExtraGroups(task));
     return frag;
   }
 
@@ -591,5 +651,5 @@ const TaskWidgets = (() => {
     return await fn(task);
   }
 
-  return { render, h, debounce, renderTaskImages, renderSourcePassages, asText, itemLabel };
+  return { render, h, debounce, renderTaskImages, renderSourcePassages, asText, itemLabel, renderExtraGroups };
 })();

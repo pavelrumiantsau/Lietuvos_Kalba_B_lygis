@@ -48,6 +48,7 @@ const PassageUI = (() => {
     if (passage.sourcePage) wrap.appendChild(h('div', { class: 'source-page' }, `p. ${passage.sourcePage}`));
     if (passage.title) wrap.appendChild(h('div', { class: 'passage-title' }, passage.title));
     if (passage.author) wrap.appendChild(h('div', { class: 'q-text' }, passage.author));
+    if (passage.intro) wrap.appendChild(h('p', {}, passage.intro));
 
     if (passage.summaryNotVerbatim) {
       const { wrap: box } = renderSourceTextBox(passage);
@@ -69,6 +70,7 @@ const PassageUI = (() => {
     }
 
     if (passage.images) wrap.appendChild(await renderImages(passage.images));
+    wrap.appendChild(TaskWidgets.renderExtraGroups(passage));
 
     if (passage.footnotes && passage.footnotes.length) {
       const fn = h('div', { class: 'footnotes' });
