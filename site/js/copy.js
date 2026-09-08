@@ -3,6 +3,7 @@
 // verification. This app never talks to any AI API directly.
 const CopyForCheck = (() => {
   function itemKey(item, i) { return item.number != null ? String(item.number) : String(i); }
+  const { asText, itemLabel } = TaskWidgets;
 
   function originalContentLines(task) {
     const lines = [];
@@ -35,10 +36,21 @@ const CopyForCheck = (() => {
         task.statements.forEach(s => lines.push(`${s.number}. ${s.text}${s.given ? '  [pavyzdys]' : ''}`));
         break;
       case 'matching':
+        if (!task.right || !task.right.length) {
+          (task.left || []).forEach((raw, i) => {
+            const label = task.leftLabels ? task.leftLabels[i] : itemLabel(raw, i + 1);
+            lines.push(`${label}. ${asText(raw)}`);
+          });
+          if (task.note) lines.push(`(${task.note})`);
+          break;
+        }
         lines.push('Kairė:');
-        task.left.forEach((t, i) => lines.push(`  ${i + 1}. ${t}${task.given && task.given[String(i + 1)] ? ` [pavyzdys: ${task.given[String(i + 1)]}]` : ''}`));
+        task.left.forEach((raw, i) => {
+          const num = String(itemLabel(raw, i + 1));
+          lines.push(`  ${num}. ${asText(raw)}${task.given && task.given[num] ? ` [pavyzdys: ${task.given[num]}]` : ''}`);
+        });
         lines.push('Dešinė:');
-        task.right.forEach((t, j) => lines.push(`  ${String.fromCharCode(65 + j)}. ${t}`));
+        task.right.forEach((raw, j) => lines.push(`  ${itemLabel(raw, String.fromCharCode(65 + j))}. ${asText(raw)}`));
         break;
       case 'ordering': {
         const items = task.items || [];
@@ -119,9 +131,14 @@ const CopyForCheck = (() => {
         });
         break;
       case 'matching':
-        task.left.forEach((t, i) => {
-          if (task.given && task.given[String(i + 1)]) return;
-          lines.push(`${i + 1}. ${t} → ${(a && a[i]) || '(nepasirinkta)'}`);
+        if (!task.right || !task.right.length) {
+          lines.push(typeof a === 'string' && a.trim() ? a : '(neatsakyta)');
+          break;
+        }
+        task.left.forEach((raw, i) => {
+          const num = String(itemLabel(raw, i + 1));
+          if (task.given && task.given[num]) return;
+          lines.push(`${num}. ${asText(raw)} → ${(a && a[i]) || '(nepasirinkta)'}`);
         });
         break;
       case 'ordering': {

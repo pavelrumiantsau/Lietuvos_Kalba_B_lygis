@@ -22,6 +22,56 @@ const TaskWidgets = (() => {
     return (...args) => { clearTimeout(t); t = setTimeout(() => fn(...args), ms); };
   }
 
+  // Some chapters use richer item shapes ({number, text} / {letter, text} / {name}
+  // / {label}) instead of plain strings for list entries. Coerce defensively so a
+  // schema variant never crashes the renderer.
+  function asText(v) {
+    if (v == null) return '';
+    if (typeof v === 'string') return v;
+    if (typeof v === 'object') return v.text ?? v.name ?? v.label ?? v.sentence ?? JSON.stringify(v);
+    return String(v);
+  }
+  function itemLabel(v, fallback) {
+    if (v && typeof v === 'object' && (v.number != null || v.letter != null)) return v.number ?? v.letter;
+    return fallback;
+  }
+
+  // Some exercises are a word-search grid or a small data chart rather than a list
+  // of items. These are schema extensions (not every chapter has them) that can show
+  // up on any taskType, so render them generically wherever present.
+  function renderGrid(grid) {
+    // Rows are either an array of single-letter cells, or a pre-spaced string
+    // ("S V E I K I N A D O") — handle both without guessing wrong.
+    const table = h('table', { class: 'fill-table', style: 'font-family:ui-monospace,monospace;text-align:center' });
+    grid.forEach(row => {
+      const cells = Array.isArray(row) ? row : String(row).trim().split(/\s+/);
+      table.appendChild(h('tr', {}, cells.map(cell => h('td', { style: 'padding:2px 6px' }, String(cell)))));
+    });
+    return table;
+  }
+  function renderChartTable(title, rows) {
+    if (!rows || !rows.length) return null;
+    const cols = Object.keys(rows[0]);
+    const table = h('table', { class: 'fill-table' });
+    if (title) table.appendChild(h('caption', { style: 'text-align:left;font-weight:700;padding:4px 0' }, title));
+    table.appendChild(h('tr', {}, cols.map(c => h('th', {}, c))));
+    rows.forEach(r => table.appendChild(h('tr', {}, cols.map(c => h('td', {}, String(r[c]))))));
+    return table;
+  }
+  function renderExtras(task) {
+    const frag = document.createDocumentFragment();
+    if (task.grid) frag.appendChild(renderGrid(task.grid));
+    if (task.chart) {
+      const c = task.chart;
+      const t1 = renderChartTable(c.title1, c.data1);
+      const t2 = renderChartTable(c.title2, c.data2);
+      if (t1) frag.appendChild(t1);
+      if (t2) frag.appendChild(t2);
+      if (!t1 && !t2 && c.note) frag.appendChild(h('div', { class: 'q-text' }, c.note));
+    }
+    return frag;
+  }
+
   async function renderTaskImages(images) {
     const frag = document.createDocumentFragment();
     for (const img of images || []) {
@@ -104,6 +154,7 @@ const TaskWidgets = (() => {
     const wrap = h('div', {});
     if (task.sourcePassages) wrap.appendChild(await renderSourcePassages(task));
     if (task.quotes) wrap.appendChild(PassageUI.renderQuotes(task.quotes));
+    wrap.appendChild(renderExtras(task));
 
     if (task.questions && task.questions.length) {
       task.questions.forEach((q, i) => {
@@ -136,6 +187,7 @@ const TaskWidgets = (() => {
     const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
     const wrap = h('div', {});
     if (task.sourcePassages) wrap.appendChild(await renderSourcePassages(task));
+    wrap.appendChild(renderExtras(task));
     if (task.prompt && task.prompt !== task.instruction) wrap.appendChild(h('div', { class: 'q-text' }, task.prompt));
     if (task.wordBank && task.wordBank.length) {
       wrap.appendChild(h('div', { class: 'wordbank' }, task.wordBank.map(w => h('span', { class: 'chip' }, w))));
@@ -213,14 +265,39 @@ const TaskWidgets = (() => {
 
   // --- matching: pair left column with right column --------------------------------------
   function renderMatching(task) {
+    // Some "matching" tasks in the book don't actually have a second column
+    // (e.g. matching numbered illustrations described only in a note, or a
+    // set of lettered options matched into blanks elsewhere) — those don't
+    // fit the two-select-columns UI, so fall back to a listing + free answer.
+    if (!task.right || !task.right.length) {
+      const wrap = h('div', {});
+      const items = task.left || [];
+      const labels = task.leftLabels;
+      const list = h('ul', {});
+      items.forEach((raw, i) => {
+        const label = labels ? labels[i] : itemLabel(raw, i + 1);
+        list.appendChild(h('li', {}, `${label}. ${asText(raw)}`));
+      });
+      wrap.appendChild(list);
+      if (task.note) wrap.appendChild(h('div', { class: 'source-page' }, task.note));
+      if (task.given) wrap.appendChild(h('div', { class: 'tf-given-badge' }, `Pavyzdys: ${JSON.stringify(task.given)}`));
+      const saved = AnswerStore.get(task.id).value || '';
+      const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
+      const ta = h('textarea', { class: 'open-answer', rows: 4, oninput: (e) => save(e.target.value) });
+      ta.value = saved;
+      wrap.appendChild(ta);
+      return wrap;
+    }
+
     const saved = AnswerStore.get(task.id).value || {};
     const given = task.given || {};
     const wrap = h('div', {});
     if (task.note) wrap.appendChild(h('div', { class: 'source-page' }, task.note));
     const inner = h('div', { class: 'matching-wrap' });
     const leftCol = h('div', { class: 'matching-col' });
-    task.left.forEach((text, i) => {
-      const num = String(i + 1);
+    task.left.forEach((raw, i) => {
+      const num = String(itemLabel(raw, i + 1));
+      const text = asText(raw);
       if (given[num]) {
         leftCol.appendChild(h('div', { class: 'matching-item' }, [
           h('span', {}, `${num}. ${text}`),
@@ -248,10 +325,11 @@ const TaskWidgets = (() => {
       ]));
     });
     const rightCol = h('div', { class: 'matching-col' });
-    task.right.forEach((text, j) => {
+    task.right.forEach((raw, j) => {
+      const letter = itemLabel(raw, String.fromCharCode(65 + j));
       rightCol.appendChild(h('div', { class: 'matching-item' }, [
-        h('span', { class: 'letter' }, String.fromCharCode(65 + j)),
-        h('span', {}, text),
+        h('span', { class: 'letter' }, String(letter)),
+        h('span', {}, asText(raw)),
       ]));
     });
     inner.appendChild(leftCol);
@@ -429,6 +507,7 @@ const TaskWidgets = (() => {
     if (task.wordBank) wrap.appendChild(h('div', { class: 'wordbank' }, task.wordBank.map(w => h('span', { class: 'chip' }, w))));
     if (task.verbHints) wrap.appendChild(h('div', { class: 'wordbank' }, task.verbHints.map(w => h('span', { class: 'chip' }, w))));
     if (task.images) wrap.appendChild(await renderTaskImages(task.images));
+    wrap.appendChild(renderExtras(task));
     wrap.appendChild(h('div', { class: 'q-text' }, task.raw || ''));
     const saved = AnswerStore.get(task.id).value || '';
     const save = debounce((val) => AnswerStore.setValue(task.id, val), 300);
@@ -460,5 +539,5 @@ const TaskWidgets = (() => {
     return await fn(task);
   }
 
-  return { render, h, debounce, renderTaskImages, renderSourcePassages };
+  return { render, h, debounce, renderTaskImages, renderSourcePassages, asText, itemLabel };
 })();

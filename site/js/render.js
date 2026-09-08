@@ -103,14 +103,39 @@ const Render = (() => {
     container.appendChild(sectionEl);
   }
 
+  function renderErrorCard(id, err) {
+    console.error(`Failed to render ${id}:`, err);
+    return h('div', { class: 'task-block', style: 'border-color:var(--bad)' }, [
+      h('div', { class: 'tf-given-badge', style: 'background:var(--bad-bg);color:var(--bad)' }, `Nepavyko atvaizduoti (${id})`),
+      h('div', { class: 'source-page' }, String(err && err.message || err)),
+    ]);
+  }
+
   async function renderBlocksOrTasks(container, section, ctx) {
     if (section.blocks) {
       for (const block of section.blocks) {
-        if (block.blockType === 'passage') container.appendChild(await PassageUI.renderPassageCard(block));
-        else if (block.blockType === 'task') container.appendChild(await renderTaskBlock(block, ctx));
+        try {
+          if (block.blockType === 'passage') container.appendChild(await PassageUI.renderPassageCard(block));
+          else if (block.blockType === 'task') container.appendChild(await renderTaskBlock(block, ctx));
+        } catch (err) {
+          container.appendChild(renderErrorCard(block.id, err));
+        }
       }
     } else if (section.tasks) {
-      for (const task of section.tasks) container.appendChild(await renderTaskBlock(task, ctx));
+      for (const task of section.tasks) {
+        try {
+          // A "tasks" section is flat, but some chapters embed a reference
+          // passage directly in that array instead of wiring it via
+          // sourcePassages on the task that uses it — render it as a passage.
+          if (task.blockType === 'passage' || (!task.taskType && task.paragraphs)) {
+            container.appendChild(await PassageUI.renderPassageCard(task));
+          } else {
+            container.appendChild(await renderTaskBlock(task, ctx));
+          }
+        } catch (err) {
+          container.appendChild(renderErrorCard(task.id, err));
+        }
+      }
     }
   }
 
@@ -187,11 +212,15 @@ const Render = (() => {
 
   async function renderGrammar(container, section) {
     for (const rule of section.rules) {
-      const wrap = h('div', { class: 'card grammar-rule', id: rule.id });
-      wrap.appendChild(h('div', { class: 'grammar-rule-title' }, `${rule.number}. ${rule.title}`));
-      (rule.lines || []).forEach(l => wrap.appendChild(h('div', { class: 'line' }, l)));
-      (rule.examples || []).forEach(ex => wrap.appendChild(h('div', { class: 'example' }, ex)));
-      container.appendChild(wrap);
+      try {
+        const wrap = h('div', { class: 'card grammar-rule', id: rule.id });
+        wrap.appendChild(h('div', { class: 'grammar-rule-title' }, `${rule.number}. ${rule.title}`));
+        (rule.lines || []).forEach(l => wrap.appendChild(h('div', { class: 'line' }, l)));
+        (rule.examples || []).forEach(ex => wrap.appendChild(h('div', { class: 'example' }, ex)));
+        container.appendChild(wrap);
+      } catch (err) {
+        container.appendChild(renderErrorCard(rule.id, err));
+      }
     }
   }
 
