@@ -233,20 +233,25 @@ const TaskWidgets = (() => {
       wrap.appendChild(box);
     }
 
+    // Usually binary (Teisingas/Neteisingas); some chapters print a 3rd column
+    // like "Apie tai nerašoma" — task.options carries the book's own labels.
+    const options = task.options || ['correct', 'incorrect'];
+    const optionLabel = (val) => (task.options ? val : (val === 'correct' ? 'Teisingas' : 'Neteisingas'));
+
     const table = h('table', { class: 'tf-table' });
-    table.appendChild(h('tr', {}, [h('th', {}, '#'), h('th', {}, 'Teiginys'), h('th', {}, 'Teisingas / neteisingas')]));
+    table.appendChild(h('tr', {}, [h('th', {}, '#'), h('th', {}, 'Teiginys'), h('th', {}, task.options ? task.options.join(' / ') : 'Teisingas / neteisingas')]));
     task.statements.forEach((s) => {
       if (s.given) {
         table.appendChild(h('tr', {}, [
           h('td', {}, String(s.number)),
           h('td', {}, s.text),
-          h('td', {}, h('span', { class: 'tf-given-badge' }, s.given === 'correct' ? 'Teisingas (pavyzdys)' : 'Neteisingas (pavyzdys)')),
+          h('td', {}, h('span', { class: 'tf-given-badge' }, `${optionLabel(s.given)} (pavyzdys)`)),
         ]));
         return;
       }
       const name = `${task.id}-${s.number}`;
       const group = h('div', { class: 'tf-radio-group' });
-      ['correct', 'incorrect'].forEach((val) => {
+      options.forEach((val) => {
         const id = `${name}-${val}`;
         const radio = h('input', {
           type: 'radio', name, id, value: val,
@@ -257,7 +262,7 @@ const TaskWidgets = (() => {
           },
         });
         if (saved[s.number] === val) radio.checked = true;
-        const label = h('label', { for: id }, val === 'correct' ? 'Teisingas' : 'Neteisingas');
+        const label = h('label', { for: id }, optionLabel(val));
         group.appendChild(radio);
         group.appendChild(label);
       });
@@ -525,6 +530,43 @@ const TaskWidgets = (() => {
     return wrap;
   }
 
+  // --- odd_one_out: pick the word that doesn't belong in each group ----------------------
+  function renderOddOneOut(task) {
+    const saved = AnswerStore.get(task.id).value || {};
+    const wrap = h('div', {});
+    task.items.forEach((item, i) => {
+      const key = item.number != null ? String(item.number) : String(i);
+      const row = h('div', { class: 'question-item' });
+      const words = item.words || [];
+      if (item.given) {
+        row.appendChild(h('div', { class: 'q-text' }, [
+          `${item.number}. ${words.join(', ')}`,
+          ' ',
+          h('span', { class: 'tf-given-badge' }, `pavyzdys: ${item.given}`),
+        ]));
+        wrap.appendChild(row);
+        return;
+      }
+      const select = h('select', {
+        onchange: (e) => {
+          const cur = { ...(AnswerStore.get(task.id).value || {}) };
+          cur[key] = e.target.value;
+          AnswerStore.setValue(task.id, cur);
+        },
+      });
+      select.appendChild(h('option', { value: '' }, '—'));
+      words.forEach(w => {
+        const opt = h('option', { value: w }, w);
+        if (saved[key] === w) opt.selected = true;
+        select.appendChild(opt);
+      });
+      row.appendChild(h('div', { class: 'q-text' }, `${item.number}. ${words.join(', ')}`));
+      row.appendChild(select);
+      wrap.appendChild(row);
+    });
+    return wrap;
+  }
+
   const renderers = {
     cloze: renderCloze,
     open_questions: renderOpenQuestions,
@@ -537,6 +579,8 @@ const TaskWidgets = (() => {
     transform: renderTransform,
     fill_table: renderFillTable,
     freeform: renderFreeform,
+    word_search: renderFreeform,
+    odd_one_out: renderOddOneOut,
   };
 
   async function render(task) {

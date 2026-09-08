@@ -82,10 +82,15 @@ const CopyForCheck = (() => {
         break;
       }
       case 'freeform':
+      case 'word_search':
         if (task.title) lines.push(task.title);
         if (task.wordBank) lines.push(`Žodžiai: ${task.wordBank.join(', ')}`);
         if (task.verbHints) lines.push(`Veiksmažodžiai: ${task.verbHints.join(', ')}`);
+        if (task.grid) task.grid.forEach(row => lines.push(Array.isArray(row) ? row.join(' ') : String(row)));
         lines.push(task.raw || '');
+        break;
+      case 'odd_one_out':
+        task.items.forEach(item => lines.push(`${item.number}. ${(item.words || []).join(', ')}${item.given ? `  [pavyzdys: ${item.given}]` : ''}`));
         break;
       default:
         lines.push('(nežinomas užduoties tipas)');
@@ -121,13 +126,22 @@ const CopyForCheck = (() => {
       case 'speaking':
       case 'phrase_building':
       case 'freeform':
+      case 'word_search':
         lines.push(typeof a === 'string' && a.trim() ? a : '(neatsakyta)');
+        break;
+      case 'odd_one_out':
+        task.items.forEach((item, i) => {
+          if (item.given) return;
+          const key = item.number != null ? String(item.number) : String(i);
+          lines.push(`${item.number}. ${(a && a[key]) || '(nepažymėta)'}`);
+        });
         break;
       case 'true_false':
         task.statements.forEach(s => {
           if (s.given) return;
           const v = a && a[s.number];
-          lines.push(`${s.number}. ${v === 'correct' ? 'Teisingas' : v === 'incorrect' ? 'Neteisingas' : '(nepažymėta)'}`);
+          const label = !v ? '(nepažymėta)' : (task.options ? v : (v === 'correct' ? 'Teisingas' : 'Neteisingas'));
+          lines.push(`${s.number}. ${label}`);
         });
         break;
       case 'matching':
