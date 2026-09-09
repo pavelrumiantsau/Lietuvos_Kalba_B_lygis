@@ -48,6 +48,7 @@ const PassageUI = (() => {
     if (passage.sourcePage) wrap.appendChild(h('div', { class: 'source-page' }, `p. ${passage.sourcePage}`));
     if (passage.title) wrap.appendChild(h('div', { class: 'passage-title' }, passage.title));
     if (passage.author) wrap.appendChild(h('div', { class: 'q-text' }, passage.author));
+    if (passage.instruction) wrap.appendChild(h('div', { class: 'task-instruction' }, passage.instruction));
     if (passage.intro) wrap.appendChild(h('p', {}, passage.intro));
 
     if (passage.summaryNotVerbatim) {
